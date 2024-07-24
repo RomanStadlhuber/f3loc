@@ -54,7 +54,7 @@ class TrajDataset(Dataset):
 
             if not self.without_depth:
                 # get depths
-                if self.depth_dir == None:
+                if self.depth_dir is None:
                     depth_file = os.path.join(
                         self.dataset_dir, scene, self.depth_suffix + ".txt"
                     )
@@ -233,7 +233,7 @@ class GridSeqDataset(Dataset):
         for scene in self.scene_names:
 
             # get depths
-            if self.depth_dir == None:
+            if self.depth_dir is None:
                 depth_file = os.path.join(
                     self.dataset_dir, scene, self.depth_suffix + ".txt"
                 )

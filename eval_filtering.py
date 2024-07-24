@@ -7,16 +7,21 @@ import torch
 import tqdm
 import yaml
 from attrdict import AttrDict
-from torch.utils.data import DataLoader
 
-from modules.comp.comp_d_net_pl import *
-from modules.mono.depth_net_pl import *
-from modules.mv.mv_depth_net_pl import *
-from utils.data_utils import *
-from utils.localization_utils import *
+from utils.data_utils import TrajDataset
+from modules.mv.mv_depth_net_pl import mv_depth_net_pl
+from modules.mono.depth_net_pl import depth_net_pl
+from modules.comp.comp_d_net_pl import comp_d_net_pl
+from modules.network_utils import get_rel_pose
+from utils.localization_utils import get_ray_from_depth, localize, transit
+
+
+import numpy as np
+import cv2
 
 
 def evaluate_filtering():
+    # region: define and parse arguments
     parser = argparse.ArgumentParser(description="Observation evaluation.")
     parser.add_argument(
         "--net_type",
@@ -48,30 +53,35 @@ def evaluate_filtering():
     parser.add_argument(
         "--traj_len", type=int, default=100, help="length of the trajectory"
     )
+    parser.add_argument(
+        "--map_scale", type=float, default=10, help="scale of the map in [m] per [px]. Default for original dataset is 0.01."
+    )
     args = parser.parse_args()
+    # endregion
 
     # get device
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("======= USING DEVICE : ", device, " =======")
 
+    # region: load dataset
+    # map scale
+    map_scale = float(args.map_scale)
     # network to evaluate
     net_type = args.net_type
-
     # paths
     dataset_dir = os.path.join(args.dataset_path, "gibson_t")
     depth_dir = args.dataset_path
     log_dir = args.ckpt_path
     desdf_path = os.path.join(args.dataset_path, "desdf")
     evol_path = args.evol_path
-
-    # instanciate dataset
+    # instantiate dataset
     traj_l = args.traj_len
     split_file = os.path.join(dataset_dir, "split.yaml")
     with open(split_file, "r") as f:
         split = AttrDict(yaml.safe_load(f))
-
     test_set = TrajDataset(
         dataset_dir,
+        # use datasets from the test split to evaluate
         split.test,
         L=traj_l,
         depth_dir=depth_dir,
@@ -80,12 +90,13 @@ def evaluate_filtering():
         pitch=0,
         without_depth=True,
     )
+    # endregion
 
-    # logs
+    # region: parameters
+    # whether to do logging and what
     log_error = True
     log_timing = True
-
-    # parameters
+    # localization parameters
     L = 3  # number of the source frames
     D = 128  # number of the depth planes
     d_min = 0.1  # minimum depth
@@ -94,8 +105,9 @@ def evaluate_filtering():
     F_W = 3 / 8  # camera intrinsic, focal length / image width
     orn_slice = 36  # number of discretized orientations
     trans_thresh = 0.005  # translation threshold (variance) if using comp_s
+    # endregion
 
-    # models
+    # region: load depth network
     if net_type == "mvd" or net_type == "comp_s":
         # instaciate model
         mv_net = mv_depth_net_pl.load_from_checkpoint(
@@ -130,8 +142,9 @@ def evaluate_filtering():
             use_pred=True,
         ).to(device)
         comp_net.eval()  # this is needed to disable batchnorm
+    # endregion
 
-    # get desdf for the scene
+    # region: load desdf (= precomputed raycasts)
     print("load desdf ...")
     desdfs = {}
     for scene in tqdm.tqdm(test_set.scene_names):
@@ -139,8 +152,10 @@ def evaluate_filtering():
             os.path.join(desdf_path, scene, "desdf.npy"), allow_pickle=True
         ).item()
         desdfs[scene]["desdf"][desdfs[scene]["desdf"] > 10] = 10  # truncate
+    # endregion
 
     # get the ground truth pose file
+    # region: load ground truth poses and store in dictionary of {"scene_name": poses_array}
     print("load poses and maps ...")
     maps = {}
     gt_poses = {}
@@ -167,18 +182,20 @@ def evaluate_filtering():
             pose = poses_txt[state_id].split(" ")
             x = float(pose[0])
             y = float(pose[1])
-            th = float(pose[2])
+            yaw = float(pose[2])
             # from world coordinate to map coordinate
-            x = x / 0.01 + w / 2
-            y = y / 0.01 + h / 2
+            x = x / map_scale + w / 2
+            y = y / map_scale + h / 2
 
             poses = np.concatenate(
-                (poses, np.expand_dims(np.array((x, y, th), dtype=np.float32), 0)),
+                (poses, np.expand_dims(np.array((x, y, yaw), dtype=np.float32), 0)),
                 axis=0,
             )
 
         gt_poses[scene] = poses
+    # endregion
 
+    # region: define buffers for evaluation statistics
     # record stats
     RMSEs = []
     success_10 = []  # Success @ 1m
@@ -190,41 +207,43 @@ def evaluate_filtering():
     iteration_time = 0
     feature_extraction_time = 0
     n_iter = 0
+    # endregion
 
-    # loop the over scenes
+    # process each individual scene of the validation dataset
     for data_idx in tqdm.tqdm(range(len(test_set))):
-
+        # data of current scene
         data = test_set[data_idx]
         # get the scene name according to the data_idx
         scene_idx = np.sum(data_idx >= np.array(test_set.scene_start_idx)) - 1
         scene = test_set.scene_names[scene_idx]
-
         # get idx within scene
         idx_within_scene = data_idx - test_set.scene_start_idx[scene_idx]
-
         # get desdf
         desdf = desdfs[scene]
-
         # get reference pose in map coordinate and in scene coordinate
         poses_map = gt_poses[scene][
             idx_within_scene * traj_l : idx_within_scene * traj_l + traj_l, :
         ]
-
         # transform to desdf frame
         gt_pose_desdf = poses_map.copy()
-        gt_pose_desdf[:, 0] = (gt_pose_desdf[:, 0] - desdf["l"]) / 10
-        gt_pose_desdf[:, 1] = (gt_pose_desdf[:, 1] - desdf["t"]) / 10
-
+        # (left, top) anchor position of the desdf frame
+        left_anchor = desdf["l"]
+        top_anchor = desdf["t"]
+        # x coordinates
+        gt_pose_desdf[:, 0] = (gt_pose_desdf[:, 0] - left_anchor) * map_scale
+        # y coordinates
+        gt_pose_desdf[:, 1] = (gt_pose_desdf[:, 1] - top_anchor) * map_scale
+        # load raw images
         imgs = torch.tensor(data["imgs"], device=device).unsqueeze(0)
+        # known poses for initial trajectory (i.e. the egomotion used for prediction)
         poses = torch.tensor(data["poses"], device=device).unsqueeze(0)
-
         # set prior as uniform distribution
+        # TODO: here I can set a prior based on initial guess if I want to
         prior = torch.tensor(
             np.ones_like(desdf["desdf"]) / desdf["desdf"].size, device=imgs.device
         ).to(torch.float32)
-
+        # poses estimated by the filter
         pred_poses_map = []
-
         # loop over the sequences
         for t in range(traj_l - L):
             start_iter = time.time()
@@ -433,13 +452,13 @@ def evaluate_filtering():
             last_errors = (
                 ((pred_poses_map[-10:, :2] - poses_map[-10:, :2]) ** 2).sum(axis=1)
                 ** 0.5
-            ) * 0.01
+            ) * map_scale
             # compute RMSE
             RMSE = (
                 ((pred_poses_map[-10:, :2] - poses_map[-10:, :2]) ** 2)
                 .sum(axis=1)
                 .mean()
-            ) ** 0.5 * 0.01
+            ) ** 0.5 * map_scale
             RMSEs.append(RMSE)
             print("last_errors", last_errors)
             if all(last_errors < 1):

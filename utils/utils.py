@@ -54,7 +54,7 @@ def gravity_align(
     return aligned_img
 
 
-def ray_cast(occ, pos, ang, dist_max=500):
+def ray_cast(occ, pos, ang, dist_max=500) -> float:
     """
     Cast ray in the occupancy map
     Input:
