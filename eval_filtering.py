@@ -41,21 +41,15 @@ def evaluate_filtering():
         default="./data/Gibson Floorplan Localization Dataset",
         help="path of the dataset",
     )
-    parser.add_argument(
-        "--ckpt_path", type=str, default="./logs", help="path of the checkpoints"
-    )
+    parser.add_argument("--ckpt_path", type=str, default="./logs", help="path of the checkpoints")
     parser.add_argument(
         "--evol_path",
         type=str,
         default=None,
         help="path to save the tracking evolution figures",
     )
-    parser.add_argument(
-        "--traj_len", type=int, default=100, help="length of the trajectory"
-    )
-    parser.add_argument(
-        "--map_scale", type=float, default=10, help="scale of the map in [m] per [px]. Default for original dataset is 0.01."
-    )
+    parser.add_argument("--traj_len", type=int, default=100, help="length of the trajectory")
+    parser.add_argument("--map_scale", type=float, default=0.01, help="scale of the map in [m] per [px]. Default for original dataset is 0.01.")
     args = parser.parse_args()
     # endregion
 
@@ -148,9 +142,7 @@ def evaluate_filtering():
     print("load desdf ...")
     desdfs = {}
     for scene in tqdm.tqdm(test_set.scene_names):
-        desdfs[scene] = np.load(
-            os.path.join(desdf_path, scene, "desdf.npy"), allow_pickle=True
-        ).item()
+        desdfs[scene] = np.load(os.path.join(desdf_path, scene, "desdf.npy"), allow_pickle=True).item()
         desdfs[scene]["desdf"][desdfs[scene]["desdf"] > 10] = 10  # truncate
     # endregion
 
@@ -221,27 +213,24 @@ def evaluate_filtering():
         # get desdf
         desdf = desdfs[scene]
         # get reference pose in map coordinate and in scene coordinate
-        poses_map = gt_poses[scene][
-            idx_within_scene * traj_l : idx_within_scene * traj_l + traj_l, :
-        ]
+        poses_map = gt_poses[scene][idx_within_scene * traj_l : idx_within_scene * traj_l + traj_l, :]
         # transform to desdf frame
         gt_pose_desdf = poses_map.copy()
         # (left, top) anchor position of the desdf frame
         left_anchor = desdf["l"]
         top_anchor = desdf["t"]
+        DESDF_SCALE = 0.1  # [m/px], see DATASET.md
         # x coordinates
-        gt_pose_desdf[:, 0] = (gt_pose_desdf[:, 0] - left_anchor) * map_scale
+        gt_pose_desdf[:, 0] = (gt_pose_desdf[:, 0] - left_anchor) * map_scale / DESDF_SCALE
         # y coordinates
-        gt_pose_desdf[:, 1] = (gt_pose_desdf[:, 1] - top_anchor) * map_scale
+        gt_pose_desdf[:, 1] = (gt_pose_desdf[:, 1] - top_anchor) * map_scale / DESDF_SCALE
         # load raw images
         imgs = torch.tensor(data["imgs"], device=device).unsqueeze(0)
         # known poses for initial trajectory (i.e. the egomotion used for prediction)
         poses = torch.tensor(data["poses"], device=device).unsqueeze(0)
         # set prior as uniform distribution
         # TODO: here I can set a prior based on initial guess if I want to
-        prior = torch.tensor(
-            np.ones_like(desdf["desdf"]) / desdf["desdf"].size, device=imgs.device
-        ).to(torch.float32)
+        prior = torch.tensor(np.ones_like(desdf["desdf"]) / desdf["desdf"].size, device=imgs.device).to(torch.float32)
         # poses estimated by the filter
         pred_poses_map = []
         # loop over the sequences
@@ -292,9 +281,7 @@ def evaluate_filtering():
                 pred_dict = mv_net.net(input_dict)
                 pred_depths = pred_dict["d"]
             elif net_type == "d" or (net_type == "comp_s" and use_mono):
-                pred_depths, attn_2d, prob = d_net.encoder(
-                    input_dict["img"], input_dict["mask"]
-                )
+                pred_depths, attn_2d, prob = d_net.encoder(input_dict["img"], input_dict["mask"])
             elif net_type == "comp":
                 pred_dict = comp_net.comp_d_net(input_dict)
                 pred_depths = pred_dict["d_comp"]
@@ -347,9 +334,7 @@ def evaluate_filtering():
                 fig = plt.figure(0, figsize=(20, 20))
                 fig.clf()
                 ax = fig.add_subplot(1, 2, 2)
-                ax.imshow(
-                    posterior_2d.detach().cpu().numpy(), origin="lower", cmap="coolwarm"
-                )
+                ax.imshow(posterior_2d.detach().cpu().numpy(), origin="lower", cmap="coolwarm")
                 ax.quiver(
                     pose[0],
                     pose[1],
@@ -418,15 +403,9 @@ def evaluate_filtering():
                     minlength=0.1,
                 )
 
-                if not os.path.exists(
-                    os.path.join(evol_path, "pretty_filter", str(data_idx))
-                ):
+                if not os.path.exists(os.path.join(evol_path, "pretty_filter", str(data_idx))):
                     os.makedirs(os.path.join(evol_path, "pretty_filter", str(data_idx)))
-                fig.savefig(
-                    os.path.join(
-                        evol_path, "pretty_filter", str(data_idx), str(t) + ".png"
-                    )
-                )
+                fig.savefig(os.path.join(evol_path, "pretty_filter", str(data_idx), str(t) + ".png"))
 
             # transition
             # use ground truth to compute transitions, use relative poses
@@ -436,9 +415,7 @@ def evaluate_filtering():
             next_pose = poses[0, t + L + 1, :]
 
             transition = get_rel_pose(current_pose, next_pose)
-            prior = transit(
-                posterior, transition, sig_o=0.1, sig_x=0.1, sig_y=0.1, tsize=7, rsize=7
-            )
+            prior = transit(posterior, transition, sig_o=0.1, sig_x=0.1, sig_y=0.1, tsize=7, rsize=7)
 
             end_iter = time.time()
             matching_time += matching_end - matching_start
@@ -449,16 +426,9 @@ def evaluate_filtering():
         if log_error:
             pred_poses_map = np.stack(pred_poses_map)
             # record success rate, from map to global
-            last_errors = (
-                ((pred_poses_map[-10:, :2] - poses_map[-10:, :2]) ** 2).sum(axis=1)
-                ** 0.5
-            ) * map_scale
+            last_errors = (((pred_poses_map[-10:, :2] - poses_map[-10:, :2]) ** 2).sum(axis=1) ** 0.5) * map_scale
             # compute RMSE
-            RMSE = (
-                ((pred_poses_map[-10:, :2] - poses_map[-10:, :2]) ** 2)
-                .sum(axis=1)
-                .mean()
-            ) ** 0.5 * map_scale
+            RMSE = (((pred_poses_map[-10:, :2] - poses_map[-10:, :2]) ** 2).sum(axis=1).mean()) ** 0.5 * map_scale
             RMSEs.append(RMSE)
             print("last_errors", last_errors)
             if all(last_errors < 1):
