@@ -11,9 +11,7 @@ import tqdm
 from utils.utils import ray_cast
 
 
-def raycast_desdf(
-    occ, orn_slice=36, max_dist=10, original_resolution=0.01, resolution=0.1
-):
+def raycast_desdf(occ, orn_slice=36, max_dist=10, original_resolution=0.01, resolution=0.1):
     """
     Get desdf from occupancy grid through brute force raycast
     Input:
@@ -35,30 +33,43 @@ def raycast_desdf(
         for row in tqdm.tqdm(range(desdf.shape[0])):
             for col in range(desdf.shape[1]):
                 pos = np.array([row, col]) * ratio
-                desdf[row, col, o] = ray_cast(
-                    occ, pos, theta, max_dist / original_resolution
-                )
+                desdf[row, col, o] = ray_cast(occ, pos, theta, max_dist / original_resolution)
 
     return desdf * original_resolution
 
 
 if __name__ == "__main__":
-    """
-    This is just an example
-    """
-    # map path
-    map_path = os.path.join("./data", "map.png")
+    from argparse import ArgumentParser
 
+    arg_parser = ArgumentParser(description="Generate DESDF (precomputed raycasts) for your map")
+    arg_parser.add_argument("--scene_name", type=str, required=True, help="Name of the scene. Required.")
+    arg_parser.add_argument("--data_dir", type=str, default="./data", help="Directory to save the DESDF. Default is ./data.")
+    arg_parser.add_argument("--map_path", type=str, default="./data/map.png")
+    arg_parser.add_argument("--yaw_resolution", type=int, default=36, help="Discretization of yaw. Default is 36 discrete orientations.")
+    arg_parser.add_argument("--max_dist", type=int, default=10, help="Maximum distance to raycast. Default is 10 meters.")
+    arg_parser.add_argument("--map_scale", type=float, default=0.01, help="Resolution of the map in meters per pixel. Default is 0.01.")
+    arg_parser.add_argument("--desdf_scale", type=float, default=0.1, help="Resolution of the DESDF in meters per pixel. Default is 0.1.")
+
+    args = arg_parser.parse_args()
+    scene_name = args.scene_name
+    data_dir = args.data_dir
+    map_path = args.map_path
+    yaw_resolution = args.yaw_resolution
+    map_scale = args.map_scale
+    desdf_scale = args.desdf_scale
+
+    if desdf_scale != 0.1:
+        # TODO: add DESDF scale in file name to support multiple scales
+        NotImplementedError("Only desdf_scale=0.1 (default) is supported for now.")
+
+    # read occupancy grid map
+    # TODO: apply thresholding or raise error if values are not binary
     occ = cv2.imread(map_path)[:, :, 0]
     desdf = {}
-
     # ray cast desdf
-    desdf["desdf"] = raycast_desdf(
-        occ, orn_slice=36, max_dist=15, original_resolution=0.1, resolution=0.1
-    )
-
+    desdf["desdf"] = raycast_desdf(occ, orn_slice=yaw_resolution, max_dist=15, original_resolution=map_scale, resolution=desdf_scale)
     # save desdf
-    scene_dir = os.path.join("./data", "scene_name")
+    scene_dir = os.path.join(data_dir, scene_name)
     if not os.path.exists(scene_dir):
         os.mkdir(scene_dir)
     save_path = os.path.join(scene_dir, "desdf.npy")
