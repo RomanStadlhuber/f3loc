@@ -35,7 +35,7 @@ pip install -r requirements.txt
 ```
 
 <details>
-  <summary>when using (shame on you)</summary>
+  <summary>when using conda (shame on you)</summary>
 
 ```bash
 git clone https://github.com/romanstadlhuber/f3loc.git
