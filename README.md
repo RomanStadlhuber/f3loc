@@ -23,12 +23,28 @@ If you use this project or ideas from the paper for your research, please cite o
 
 ## Requirements
 To get started with the code, clone this repository and install the required dependencies:
+
 ```bash
-git clone https://github.com/felix-ch/f3loc.git
+git clone https://github.com/romanstadlhuber/f3loc.git
+# install tkinter if you havent already (required by matplotlib)
+apt update && apt install -y -q python3-tk python3-virtualenv
+# create venv and install dependencies
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+<details>
+  <summary>when using (shame on you)</summary>
+
+```bash
+git clone https://github.com/romanstadlhuber/f3loc.git
 cd f3loc
 conda env create -f environment.yml
 conda activate f3loc
 ```
+
+</details>
 
 ## Download Checkpoints
 You can download the model checkpoints from [here](https://drive.google.com/drive/folders/1-TDlM9hjeODizeebgfPx7zWez0XPYCKm?usp=sharing).\

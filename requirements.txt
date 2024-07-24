@@ -1,0 +1,9 @@
+tqdm
+torch
+torchvision
+torchaudio
+matplotlib
+lightning
+attrdict
+opencv-python
+scipy
